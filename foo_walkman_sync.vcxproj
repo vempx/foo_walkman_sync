@@ -1,0 +1,20 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations"><ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration></ItemGroup>
+  <PropertyGroup Label="Globals"><ProjectGuid>{ED5C5303-40EE-45F7-914B-A419728A77A1}</ProjectGuid><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration"><ConfigurationType>DynamicLibrary</ConfigurationType><PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+    <ClCompile><MultiProcessorCompilation>true</MultiProcessorCompilation><LanguageStandard>stdcpp20</LanguageStandard><AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions><AdditionalIncludeDirectories>..;..\foobar2000</AdditionalIncludeDirectories><PreprocessorDefinitions>NTDDI_VERSION=0x0A000010;_WIN32_WINNT=0x0A00;WINVER=0x0A00;NOMINMAX;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <ResourceCompile><AdditionalOptions>/c65001 %(AdditionalOptions)</AdditionalOptions></ResourceCompile>
+    <Link><AdditionalDependencies>..\foobar2000\shared\shared-x64.lib;ole32.lib;oleaut32.lib;shell32.lib;propsys.lib;shlwapi.lib;comctl32.lib;portabledeviceguids.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+  </ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="*.cpp"/><ResourceCompile Include="*.rc"/></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\pfc\pfc.vcxproj"/>
+    <ProjectReference Include="..\foobar2000\SDK\foobar2000_SDK.vcxproj"/>
+    <ProjectReference Include="..\foobar2000\foobar2000_component_client\foobar2000_component_client.vcxproj"/>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets"/>
+</Project>
+
