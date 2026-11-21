@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "language.h"
 
 namespace wm {
 namespace fs = std::filesystem;

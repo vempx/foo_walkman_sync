@@ -59,7 +59,7 @@ Song prepare(metadb_handle_ptr h, const Device &device, titleformat_object::ptr 
     auto path = filesystem::g_get_native_path(h->get_path());
     s.path = path.c_str();
     if (s.path.empty())
-        throw std::runtime_error("仅支持本地源文件");
+        throw std::runtime_error(tr("localSource"));
     auto src = fs::path(wide(s.path));
     auto ext = utf(src.extension().wstring());
     s.identity = s.path + "|" + std::to_string(sub);
@@ -158,7 +158,7 @@ class Transfer : public threaded_process_callback {
         auto scope = device.id + "\n" + device.root;
         titleformat_object::ptr pattern;
         if (!titleformat_compiler::get()->compile(pattern, device.pattern.c_str()))
-            throw std::runtime_error("无效的标题格式模板");
+            throw std::runtime_error(tr("invalidPattern"));
         std::map<S, Entry, IgnoreCase> entries;
         std::vector<Manifest> manifests;
         auto problem = [&](const S &label, const std::exception &e) {
@@ -176,7 +176,7 @@ class Transfer : public threaded_process_callback {
                     if (it == entries.end())
                         it = entries.emplace(rel, Entry{std::move(song)}).first;
                     else if (it->second.song.identity != song.identity)
-                        throw std::runtime_error("两首源曲目指向同一个目标：" + rel);
+                        throw std::runtime_error(message("trackCollision", {rel}));
                     if (manifest) manifest->order.push_back(&it->second);
                 } catch (const exception_aborted &) {
                     throw;
@@ -204,7 +204,7 @@ class Transfer : public threaded_process_callback {
             if (!s.coverHash.empty()) {
                 auto cover = transferCover(s, abort);
                 if (!cover || coverHash(cover) != s.coverHash)
-                    throw std::runtime_error("源封面在同步期间发生变化");
+                    throw std::runtime_error(tr("coverChanged"));
                 if (s.mode == Song::copy) {
                     auto staged = tmp.dir / (L"track" + src.extension().wstring());
                     fs::copy_file(src, staged);
@@ -215,7 +215,7 @@ class Transfer : public threaded_process_callback {
                 filesystem::g_get_canonical_path(utf(src.wstring()).c_str(), url);
                 if (s.mode == Song::convert && device.output().custom() &&
                     !album_art_editor::g_is_supported_path(url)) {
-                    report += s.rel + " — 此格式没有可用的封面写入器\n";
+                    report += s.rel + " — " + tr("noCoverWriter") + "\n";
                 } else {
                     auto editor = album_art_editor::g_open({}, url, abort);
                     editor->set(album_art_ids::cover_front, cover, abort);
@@ -225,7 +225,7 @@ class Transfer : public threaded_process_callback {
             auto before = target->stat(s.rel);
             if (replace ? (!before || !e.conflict || before->key() != e.conflict->key())
                         : before.has_value())
-                throw std::runtime_error("设备文件在同步期间发生变化");
+                throw std::runtime_error(tr("fileChanged"));
             auto stamp = target->put(s.rel, src, replace, abort);
             record(e, stamp, "sent");
             ++written;
@@ -272,7 +272,7 @@ class Transfer : public threaded_process_callback {
                 else {
                     auto stamp = target->stat(rel);
                     if (!stamp || stamp->key() != e.conflict->key())
-                        throw std::runtime_error("设备文件已变化，未沿用");
+                        throw std::runtime_error(tr("skipChanged"));
                     record(e, *stamp, "adopted");
                     ++reused;
                 }
@@ -291,7 +291,7 @@ class Transfer : public threaded_process_callback {
                     "SELECT list FROM exported WHERE device=? AND file=? COLLATE NOCASE AND list<>?",
                     {scope, m.name, m.id});
                 if (!owners.empty())
-                    throw std::runtime_error("另一张播放列表已使用相同文件名");
+                    throw std::runtime_error(tr("playlistNameTaken"));
                 S content = "#EXTM3U\r\n";
                 for (auto *item : m.order)
                     if (item->ok) {
@@ -315,7 +315,7 @@ class Transfer : public threaded_process_callback {
                     bool approved = false;
                     fb2k::inMainThreadSynchronous2([&] {
                         approved = MessageBoxW(core_api::get_main_window(),
-                                               wide("覆盖设备已有歌单 " + m.name + "？").c_str(),
+                                               wide(message("overwritePlaylist", {m.name})).c_str(),
                                                L"Walkman Sync", MB_YESNO | MB_DEFBUTTON2) == IDYES;
                     });
                     if (!approved)
@@ -347,9 +347,9 @@ class Transfer : public threaded_process_callback {
     }
     void on_done(HWND, bool cancelled) override {
         busy.erase(device.location);
-        S summary = device.name + (cancelled ? " 已取消" : " 同步结束") + "\n发送 " +
-                    std::to_string(written) + " 首，复用 " + std::to_string(reused) + " 首，写入 " +
-                    std::to_string(playlists) + " 张歌单。";
+        S summary = message(cancelled ? "cancelled" : "finished", {device.name}) + "\n" +
+                    message("counts", {std::to_string(written), std::to_string(reused),
+                                       std::to_string(playlists)});
         if (!report.empty())
             summary += "\n\n" + report;
         try {
@@ -370,7 +370,7 @@ void start(const Device &device, const std::set<S> &playlists, bool automatic, m
     if (automatic && !device.autoSync) return;
     if (busy.contains(device.location)) {
         if (!automatic)
-            popup_message::g_show("设备正在同步。", "Walkman Sync");
+            popup_message::g_show(tr("busy"), "Walkman Sync");
         return;
     }
     auto task = fb2k::service_new<Transfer>(device);
@@ -396,7 +396,7 @@ void start(const Device &device, const std::set<S> &playlists, bool automatic, m
     }
     if (task->lists.empty()) {
         if (!automatic)
-            popup_message::g_show("设备没有可同步的订阅歌单。", "Walkman Sync");
+            popup_message::g_show(tr("noSubscriptions"), "Walkman Sync");
         return;
     }
     busy.insert(device.location);
@@ -406,7 +406,7 @@ void start(const Device &device, const std::set<S> &playlists, bool automatic, m
                                                   threaded_process::flag_show_abort |
                                                   threaded_process::flag_show_progress,
                                               core_api::get_main_window(), device.name.c_str()))
-            throw std::runtime_error("无法启动传输");
+            throw std::runtime_error(tr("startFailed"));
     } catch (...) {
         busy.erase(device.location);
         throw;

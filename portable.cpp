@@ -136,7 +136,7 @@ class Session {
         Values errors;
         check(properties->SetValues(wide(id).c_str(), v, &errors), "Rename MTP object");
         if (object(id).name != name)
-            throw std::runtime_error("设备拒绝重命名文件");
+            throw std::runtime_error(tr("renameRejected"));
     }
     void discard(const S &id) {
         auto ids = make<IPortableDevicePropVariantCollection>(CLSID_PortableDevicePropVariantCollection);
@@ -162,7 +162,7 @@ class Session {
         if (source) {
             local.open(*source, std::ios::binary);
             if (!local)
-                throw std::runtime_error("回读验证时无法打开源文件");
+                throw std::runtime_error(tr("verifyOpen"));
         }
         std::vector<char> remote(std::clamp<DWORD>(optimal, 4096, 1024 * 1024)), expected(remote.size());
         uint64_t total = 0;
@@ -174,7 +174,7 @@ class Session {
             if (source && got) {
                 local.read(expected.data(), got);
                 if (local.gcount() != got || memcmp(remote.data(), expected.data(), got))
-                    throw std::runtime_error("设备回读内容与源文件不同，偏移 " + std::to_string(total));
+                    throw std::runtime_error(message("verifyMismatch", {std::to_string(total)}));
             }
             total += got;
             if (!got || hr == S_FALSE)
@@ -231,18 +231,17 @@ class Session {
                     ULONG done = 0;
                     writeError = stream->Write(buffer.data() + sent, n - sent, &done);
                     if (FAILED(writeError)) {
-                        auto detail = "Write MTP data，偏移 " + std::to_string(offset) + " / " +
-                                      std::to_string(expected) + " 字节";
+                        auto detail = message("writeOffset", {std::to_string(offset), std::to_string(expected)});
                         check(writeError, detail.c_str());
                     }
                     if (!done || done > n - sent)
-                        throw std::runtime_error("MTP 未确认写入的字节数");
+                        throw std::runtime_error(tr("writeUnconfirmed"));
                     sent += done;
                     offset += done;
                 }
             }
             if (!input.eof() || input.bad())
-                throw std::runtime_error("读取源文件失败");
+                throw std::runtime_error(tr("readFailed"));
             abort.check();
             check(stream->Commit(STGC_DEFAULT), "Commit MTP file");
         } catch (...) {
@@ -271,7 +270,7 @@ class Session {
         CComQIPtr<IPortableDeviceDataStream> data(stream);
         LPWSTR raw = nullptr;
         if (!data)
-            throw std::runtime_error("设备未返回数据流标识");
+            throw std::runtime_error(tr("streamId"));
         check(data->GetObjectID(&raw), "Read new MTP object ID");
         auto id = utf(raw);
         CoTaskMemFree(raw);
@@ -282,14 +281,13 @@ class Session {
             if (!written.hasSize || written.size != expected) {
                 const auto actual = readBack(id, abort, &src);
                 if (actual != expected)
-                    throw std::runtime_error("MTP 大小验证失败：应为 " + std::to_string(expected) +
-                                             " 字节，回读 " + std::to_string(actual) + " 字节");
+                    throw std::runtime_error(message("sizeVerification", {std::to_string(expected), std::to_string(actual)}));
                 written.size = actual;
                 written.hasSize = true;
             }
             if (CompareStringOrdinal(wide(written.name).c_str(), -1, wide(name).c_str(), -1, TRUE) !=
                 CSTR_EQUAL)
-                throw std::runtime_error("设备保存的文件名与目标不同：" + written.name);
+                throw std::runtime_error(message("renamedUnexpected", {written.name}));
             return written;
         } catch (...) {
             try {
@@ -358,7 +356,7 @@ class Portable final : public Storage {
             }
             auto child = session.find(id, name);
             if (child && child->type != WPD_CONTENT_TYPE_FOLDER)
-                throw std::runtime_error("目标目录名已被文件占用");
+                throw std::runtime_error(tr("directoryOccupied"));
             if (!child && !create)
                 return {"", {}};
             id = child ? child->id : session.folder(id, name);
@@ -387,7 +385,7 @@ class Portable final : public Storage {
         auto [parent, name] = split(rel, true);
         auto old = session.find(parent, name);
         if (old && !replace)
-            throw std::runtime_error("目标文件已存在");
+            throw std::runtime_error(tr("fileExists"));
         if (!old) {
             auto file = session.upload(parent, name, src, abort);
             return session.stamp(file, file.size);
@@ -416,10 +414,10 @@ class Portable final : public Storage {
         auto [parent, name] = split(from, false);
         auto [dest, newName] = split(to, false);
         if (parent.empty() || parent != dest || session.find(dest, newName))
-            throw std::runtime_error("歌单重命名冲突");
+            throw std::runtime_error(tr("renameConflict"));
         auto obj = session.find(parent, name);
         if (!obj)
-            throw std::runtime_error("旧歌单已不存在");
+            throw std::runtime_error(tr("oldPlaylistMissing"));
         session.renameObject(obj->id, newName);
     }
 };
@@ -434,6 +432,6 @@ std::unique_ptr<Storage> portableStorage(const Device &d) {
     for (auto &m : enumerate())
         if (m.endpoint.key == d.location)
             return std::make_unique<Portable>(m, d.root);
-    throw std::runtime_error("所选 MTP 存储未连接");
+    throw std::runtime_error(tr("mtpOffline"));
 }
 } // namespace wm

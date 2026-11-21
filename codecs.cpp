@@ -6,19 +6,19 @@
 namespace wm {
 const std::vector<CodecMode> &codecModes(const S &codec) {
     static const std::map<S, std::vector<CodecMode>> modes = {
-        {"mp3", {{"vbr","可变比特率 (VBR)","--silent -V %v %s %d","VBR 品质 (0 最佳，9 最低)",0,9,2},
-                 {"abr","平均比特率 (ABR)","--silent --abr %v %s %d","目标比特率 (8–320 kbps)",8,320,192},
-                 {"cbr","恒定比特率 (CBR)","--silent --cbr -b %v %s %d","恒定比特率 (kbps)",8,320,192}}},
-        {"opus",{{"vbr","可变比特率 (VBR)","--quiet --vbr --bitrate %v %s %d","目标比特率 (6–510 kbps)",6,510,128},
-                 {"cvbr","约束 VBR","--quiet --cvbr --bitrate %v %s %d","目标比特率 (6–510 kbps)",6,510,128},
-                 {"cbr","恒定比特率 (CBR)","--quiet --hard-cbr --bitrate %v %s %d","目标比特率 (6–510 kbps)",6,510,128}}},
-        {"vorbis",{{"vbr","按品质 (VBR)","-Q -q %v -o %d %s","VBR 品质 (0–10)",0,10,5},
-                   {"managed","受控平均比特率","-Q --managed -b %v -o %d %s","目标比特率 (kbps)",8,500,160}}},
-        {"nero",{{"vbr","可变比特率 (VBR)","-q %v -if %s -of %d","VBR 品质 (0–100)",0,100,60},
-                 {"abr","目标比特率 (ABR)","-br %v -if %s -of %d","目标比特率 (kbps)",8,576,192},
-                 {"cbr","恒定比特率 (CBR)","-cbr %v -if %s -of %d","目标比特率 (kbps)",8,576,192}}},
-        {"alac",{{"standard","标准","-o %d %s","",0,0,0},
-                 {"fast","快速立体声","--fast -o %d %s","",0,0,0}}}
+        {"mp3", {{"vbr","vbr","--silent -V %v %s %d","vbr9",0,9,2},
+                 {"abr","abr","--silent --abr %v %s %d","target320",8,320,192},
+                 {"cbr","cbr","--silent --cbr -b %v %s %d","cbrValue",8,320,192}}},
+        {"opus",{{"vbr","vbr","--quiet --vbr --bitrate %v %s %d","target510",6,510,128},
+                 {"cvbr","cvbr","--quiet --cvbr --bitrate %v %s %d","target510",6,510,128},
+                 {"cbr","cbr","--quiet --hard-cbr --bitrate %v %s %d","target510",6,510,128}}},
+        {"vorbis",{{"vbr","byQuality","-Q -q %v -o %d %s","vbr10",0,10,5},
+                   {"managed","managedBitrate","-Q --managed -b %v -o %d %s","targetBitrate",8,500,160}}},
+        {"nero",{{"vbr","vbr","-q %v -if %s -of %d","vbr100",0,100,60},
+                 {"abr","targetBitrateAbr","-br %v -if %s -of %d","targetBitrate",8,576,192},
+                 {"cbr","cbr","-cbr %v -if %s -of %d","targetBitrate",8,576,192}}},
+        {"alac",{{"standard","standard","-o %d %s","",0,0,0},
+                 {"fast","fastStereo","--fast -o %d %s","",0,0,0}}}
     };
     static const std::vector<CodecMode> none;
     auto it = modes.find(codec);
@@ -40,7 +40,7 @@ void selectMode(Encoder &f, const S &id) {
 std::vector<Encoder> defaultEncoders() {
     std::vector<Encoder> result = {{"aac", "AAC (Apple)", "qaac64.exe", "", "m4a", -32, {}},
             {"mp3", "MP3 (LAME)", "lame.exe", "", "mp3", 24, {}},
-            {"flac", "FLAC", "flac.exe", "--silent -%v -o %d %s", "flac", 0, "压缩级别 (0–8)", 0, 8, 5},
+            {"flac", "FLAC", "flac.exe", "--silent -%v -o %d %s", "flac", 0, "compression", 0, 8, 5},
             {"opus", "Opus", "opusenc.exe", "", "opus", 24, {}},
             {"vorbis", "Ogg Vorbis", "oggenc2.exe", "", "ogg", 24, {}},
             {"nero", "AAC (Nero)", "neroAacEnc.exe", "", "m4a", 24, {}},
@@ -53,36 +53,36 @@ const Encoder &Device::output() const {
     for (const auto &f : formats)
         if (f.id == format)
             return f;
-    throw std::runtime_error("找不到所选的编码格式");
+    throw std::runtime_error(tr("encoderMissing"));
 }
 void validateEncoder(const Encoder &f) {
     if (f.name.empty() || f.executable.empty())
-        throw std::runtime_error("请输入编码器名称和程序文件名");
+        throw std::runtime_error(tr("encoderNameRequired"));
     fs::path path = wide(f.executable);
     if (_wcsicmp(path.extension().c_str(), L".exe") || (!path.is_absolute() && path.has_parent_path()))
-        throw std::runtime_error("编码器应为 .exe 的文件名或完整路径");
+        throw std::runtime_error(tr("exeRequired"));
     if (f.extension.empty() || f.extension.size() > 24 ||
         f.extension.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") !=
             S::npos ||
         !_stricmp(f.extension.c_str(), "m3u8") || !_stricmp(f.extension.c_str(), "m3u"))
-        throw std::runtime_error("请填写音频扩展名，例如 opus 或 m4a");
+        throw std::runtime_error(tr("extensionRequired"));
     if (f.custom() && f.arguments.find("%d") == S::npos)
-        throw std::runtime_error("参数中需要用 %d 指定输出文件");
+        throw std::runtime_error(tr("outputRequired"));
     if (f.custom() && f.bits != 16 && f.bits != 24 && f.bits != 32 && f.bits != -32)
-        throw std::runtime_error("无效的输入 PCM 格式");
+        throw std::runtime_error(tr("badPcm"));
     if (!f.parameter.empty() && (f.value < f.minimum || f.value > f.maximum))
-        throw std::runtime_error(f.parameter + "：参数超出范围");
+        throw std::runtime_error(message("range", {tr(f.parameter)}));
     if (f.id == "mp3" && f.mode == "cbr") {
         static const std::set<int> allowed = {8,16,24,32,40,48,56,64,80,96,112,128,144,160,192,224,256,320};
         if (!allowed.contains(f.value))
-            throw std::runtime_error("LAME CBR 可选 kbps：8、16、24、32、40、48、56、64、80、96、112、128、144、160、192、224、256、320");
+            throw std::runtime_error(message("lameCbr", {"8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 192, 224, 256, 320"}));
     }
 }
 static S arguments(const Device &d) {
     const auto &f = d.output();
     if (f.id == "aac") {
         if (d.aacMode != "tvbr" && d.aacMode != "cvbr" && d.aacMode != "abr" && d.aacMode != "cbr")
-            throw std::runtime_error("未知的 AAC 比特率模式");
+            throw std::runtime_error(tr("unknownAac"));
         return "--" + d.aacMode + " " + std::to_string(d.aacMode == "tvbr" ? d.quality : d.bitrate) +
                " -o %d %s";
     }
@@ -112,7 +112,7 @@ static fs::path resolveExe(const S &name) {
             return bundled;
     } else if (fs::is_regular_file(file))
         return file;
-    throw std::runtime_error("找不到编码器 " + name + "。请安装编码器，或在自定义编码器中指定完整路径。");
+    throw std::runtime_error(message("exeMissing", {name}));
 }
 // Quote each argument after expanding placeholders so paths with spaces remain one argv element.
 static std::wstring quoteArg(const std::wstring &arg) {
@@ -140,7 +140,7 @@ void runEncoder(const Device &d, bool extract, const fs::path &wav, const fs::pa
     int count = 0;
     auto raw = CommandLineToArgvW((L"encoder " + wide(spec)).c_str(), &count);
     if (!raw)
-        throw std::runtime_error("无法解析编码参数");
+        throw std::runtime_error(tr("parseArgs"));
     std::unique_ptr<void, decltype(&LocalFree)> freeArgs(raw, LocalFree);
     auto cmd = quoteArg(exe.wstring());
     for (int i = 1; i < count; ++i) {
@@ -163,7 +163,7 @@ void runEncoder(const Device &d, bool extract, const fs::path &wav, const fs::pa
     ATL::CHandle log(
         CreateFileW(logFile.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, 0, nullptr));
     if (input.m_h == INVALID_HANDLE_VALUE || log.m_h == INVALID_HANDLE_VALUE)
-        throw std::runtime_error("无法打开编码器的输入或日志");
+        throw std::runtime_error(tr("openEncoderIo"));
     STARTUPINFOEXW si{};
     si.StartupInfo.cb = sizeof(si);
     si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -199,7 +199,7 @@ void runEncoder(const Device &d, bool extract, const fs::path &wav, const fs::pa
     GetExitCodeProcess(process, &code);
     if (code || !fs::is_regular_file(dest) || !fs::file_size(dest)) {
         log.Close();
-        S message = utf(exe.filename().wstring()) + " 未生成有效输出，退出码 " + std::to_string(code);
+        S diagnostic = message("badEncoderOutput", {utf(exe.filename().wstring()), std::to_string(code)});
         std::ifstream file(logFile, std::ios::binary | std::ios::ate);
         if (file) {
             auto n = std::min<std::streamoff>(file.tellg(), 1200);
@@ -212,12 +212,12 @@ void runEncoder(const Device &d, bool extract, const fs::path &wav, const fs::pa
                         c = ' ';
                 try {
                     wide(tail);
-                    message += "\n" + tail;
+                    diagnostic += "\n" + tail;
                 } catch (const std::exception &) {
                 }
             }
         }
-        throw std::runtime_error(message);
+        throw std::runtime_error(diagnostic);
     }
 }
 } // namespace wm

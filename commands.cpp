@@ -22,7 +22,7 @@ class SyncCommand : public mainmenu_node_command {
   public:
     SyncCommand(Device d) : device(std::move(d)) {}
     void get_display(pfc::string_base &text, t_uint32 &flags) override {
-        text = "同步所有订阅播放列表";
+        text = tr("syncAll");
         flags = online(device) ? 0 : mainmenu_commands::flag_disabled;
     }
     GUID get_guid() override { return asGuid(device.id); }
@@ -100,7 +100,7 @@ class SendTracks : public contextmenu_item_node_leaf {
     }
     GUID get_guid() override { return asGuid(device.id); }
     bool is_mappable_shortcut() override { return true; }
-    bool get_description(pfc::string_base &text) override { text = "将所选曲目传输到设备"; return true; }
+    bool get_description(pfc::string_base &text) override { text = tr("sendTrackHelp"); return true; }
     void execute(metadb_handle_list_cref items,const GUID &) override {
         try { if (items.get_count()) start(device, {}, false, items); }
         catch (const std::exception &e) { error(e); }
@@ -111,7 +111,7 @@ class Destinations : public contextmenu_item_node_root_popup {
   public:
     Destinations() { for (auto &d : devices()) children.emplace_back(std::move(d)); }
     bool get_display_data(pfc::string_base &name,unsigned &flags,metadb_handle_list_cref,const GUID &) override {
-        name = "发送至"; flags = 0; return true;
+        name = tr("sendTo"); flags = 0; return true;
     }
     size_t get_children_count() override { return children.size(); }
     contextmenu_item_node *get_child(size_t i) override { return &children.at(i); }
@@ -123,8 +123,8 @@ class TrackCommands : public contextmenu_item_v2 {
     unsigned get_num_items() override { return 1; }
     GUID get_parent() override { return tracksGroup; }
     GUID get_item_guid(unsigned) override { return tracksCommand; }
-    void get_item_name(unsigned,pfc::string_base &out) override { out = "发送至"; }
-    bool get_item_description(unsigned,pfc::string_base &out) override { out = "发送所选曲目"; return true; }
+    void get_item_name(unsigned,pfc::string_base &out) override { out = tr("sendTo"); }
+    bool get_item_description(unsigned,pfc::string_base &out) override { out = tr("sendTracks"); return true; }
     t_enabled_state get_enabled_state(unsigned) override { return DEFAULT_ON; }
     contextmenu_item_node_root *instantiate_item(unsigned,metadb_handle_list_cref,const GUID &) override {
         return new Destinations;
@@ -226,11 +226,11 @@ void bridge() {
     std::istringstream indices(index);
     while (std::getline(indices, part, ',')) {
         auto i = std::stoull(part);
-        if (i >= pm->get_playlist_count()) throw std::runtime_error("歌单已经移除");
+        if (i >= pm->get_playlist_count()) throw std::runtime_error(tr("playlistRemoved"));
         if (!batch) {
             pfc::string8 actual;
             pm->playlist_get_name(i, actual);
-            if (actual != name.c_str()) throw std::runtime_error("歌单已变化，请重新打开菜单");
+            if (actual != name.c_str()) throw std::runtime_error(tr("playlistChanged"));
         }
         auto key = guid(pm->playlist_get_guid(i));
         keys.insert(key);
@@ -246,13 +246,14 @@ void bridge() {
             auto sub = db.query("SELECT list FROM subscription WHERE device=?", {d.id});
             size_t matched = std::count_if(sub.begin(), sub.end(), [&](const auto &r) {return keys.contains(r[0]);});
             reply += d.id + "\t" + d.name + "\t" + (online(d) ? "1" : "0") + "\t" +
-                     (matched == keys.size() ? "1" : "0") + "\n";
+                     (matched == keys.size() ? "1" : "0") + "\t" + tr("send") + "\t" +
+                     tr("subscribe") + "\n";
         }
         bytes(dir / L"panel-response.txt", reply);
         return;
     }
     if (keyList != id)
-        throw std::runtime_error("歌单已变化，请重新打开菜单");
+        throw std::runtime_error(tr("playlistChanged"));
     for (auto &d : all)
         if (dev == d.id) {
             if (action == "send")

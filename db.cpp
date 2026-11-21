@@ -84,14 +84,14 @@ S safeLeaf(S s) {
 }
 S normalizeRelative(const S &text) {
     if (text.empty())
-        throw std::runtime_error("路径不能为空");
+        throw std::runtime_error(tr("emptyPath"));
     S result;
     size_t begin = 0;
     for (;;) {
         auto end = text.find_first_of("/\\", begin);
         auto part = text.substr(begin, end - begin);
         if (part.empty() || part == "." || part == ".." || part.find(':') != S::npos)
-            throw std::runtime_error("需要相对路径，不能包含盘符、空目录或 ..");
+            throw std::runtime_error(tr("relativePath"));
         if (!result.empty())
             result += "\\";
         result += safeLeaf(part);
@@ -112,7 +112,7 @@ Db::Db() : p(std::make_unique<Impl>()) {
     auto folder = profile();
     fs::create_directories(folder);
     if (sqlite3_open16((folder / L"records.sqlite").c_str(), &p->db) != SQLITE_OK)
-        throw std::runtime_error("不能打开本地传输记录");
+        throw std::runtime_error(tr("openDb"));
     sqlite3_busy_timeout(p->db, 5000);
     const char *schema =
         "CREATE TABLE IF NOT EXISTS device(id TEXT PRIMARY KEY,name TEXT,location TEXT,root TEXT,pattern "
@@ -231,7 +231,7 @@ void save(const Device &d) {
     db.query("COMMIT");
 }
 void clearDeviceData(const Device &device, bool removeDevice) {
-    if (transferring(device)) throw std::runtime_error("请等待此设备的传输结束后再操作。");
+    if (transferring(device)) throw std::runtime_error(tr("waitTransfer"));
     Db db;
     db.query("BEGIN IMMEDIATE");
     // Track and playlist mappings are scoped to a device and its music root.

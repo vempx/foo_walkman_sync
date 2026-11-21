@@ -24,6 +24,28 @@ void add(HWND w, int id, const S &s, bool list = false) {
     msg(w, id, list ? LB_ADDSTRING : CB_ADDSTRING, 0, (LPARAM)wide(s).c_str());
 }
 void enable(HWND w, int id, bool yes) { EnableWindow(GetDlgItem(w, id), yes); }
+class DialogLabels {
+    std::vector<std::pair<HWND, S>> labels;
+
+    void capture(HWND control) {
+        wchar_t text[96]{};
+        GetWindowTextW(control, text, _countof(text));
+        if (text[0] == L'@') labels.emplace_back(control, utf(text + 1));
+    }
+
+  public:
+    explicit DialogLabels(HWND window) {
+        capture(window);
+        for (HWND control = GetWindow(window, GW_CHILD); control;
+             control = GetWindow(control, GW_HWNDNEXT))
+            capture(control);
+        update();
+    }
+    void update() const {
+        for (const auto &[window, key] : labels)
+            SetWindowTextW(window, wide(tr(key)).c_str());
+    }
+};
 struct AddDialog {
     std::vector<Endpoint> choices;
     fb2k::CCoreDarkModeHooks dark;
@@ -31,6 +53,7 @@ struct AddDialog {
         if (m == WM_INITDIALOG) {
             auto &self = *(AddDialog *)b;
             self.dark.AddDialogWithControls(w);
+            DialogLabels labels(w);
             for (auto &e : self.choices)
                 add(w, LOCATION, e.label);
             msg(w, LOCATION, CB_SETCURSEL, 0);
@@ -60,12 +83,13 @@ struct CustomDialog {
                 SetWindowLongPtrW(w, GWLP_USERDATA, b);
                 self = reinterpret_cast<CustomDialog *>(b);
                 self->dark.AddDialogWithControls(w);
+                DialogLabels labels(w);
                 auto &f = self->encoder;
                 set(w, NAME, f.name);
                 set(w, PROGRAM, f.executable);
                 set(w, EXTENSION, f.extension);
                 set(w, ARGUMENTS, f.arguments);
-                for (auto text : {"16 位整数", "24 位整数", "32 位整数", "32 位浮点"})
+                for (auto text : {tr("int16"), tr("int24"), tr("int32"), tr("float32")})
                     add(w, PRECISION, text);
                 msg(w, PRECISION, CB_SETCURSEL,
                     std::find(depths.begin(), depths.end(), f.bits) - depths.begin());
@@ -87,7 +111,10 @@ struct CustomDialog {
                 ofn.hwndOwner = w;
                 ofn.lpstrFile = path;
                 ofn.nMaxFile = _countof(path);
-                ofn.lpstrFilter = L"编码器 (*.exe)\0*.exe\0";
+                auto filter = wide(tr("encoderFilter"));
+                constexpr wchar_t pattern[] = L"\0*.exe\0";
+                filter.append(pattern, std::size(pattern) - 1);
+                ofn.lpstrFilter = filter.c_str();
                 ofn.lpstrInitialDir = dir.c_str();
                 ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST;
                 if (GetOpenFileNameW(&ofn)) {
@@ -135,30 +162,30 @@ struct AudioDialog {
         msg(w, AACMODE, CB_RESETCONTENT);
         int selectedMode = 0;
         if (apple) {
-            for (auto s : {"可变比特率 (VBR)", "约束 VBR", "平均比特率 (ABR)", "恒定比特率 (CBR)"})
+            for (auto s : {tr("vbr"), tr("cvbr"), tr("abr"), tr("cbr")})
                 add(w, AACMODE, s);
             auto it = std::find(modes.begin(), modes.end(), device.aacMode);
             if (it != modes.end()) selectedMode = int(it - modes.begin());
         } else {
             for (size_t i = 0; i < choices.size(); ++i) {
-                add(w, AACMODE, choices[i].label);
+                add(w, AACMODE, tr(choices[i].label));
                 if (choices[i].id == f.mode) selectedMode = int(i);
             }
         }
         msg(w, AACMODE, CB_SETCURSEL, selectedMode);
-        set(w, MODE_LABEL, f.id == "alac" ? "编码模式" : "比特率模式");
+        set(w, MODE_LABEL, f.id == "alac" ? tr("encodeMode") : tr("bitrateMode"));
         for (int id : {AACMODE, MODE_LABEL})
             ShowWindow(GetDlgItem(w, id), apple || !choices.empty() ? SW_SHOW : SW_HIDE);
         for (int id : {QUALITY, QUALITY_LABEL})
             ShowWindow(GetDlgItem(w, id), apple || !f.parameter.empty() ? SW_SHOW : SW_HIDE);
         enable(w, EDIT_CODEC, f.custom());
         if (!apple) {
-            set(w, QUALITY_LABEL, f.parameter);
+            set(w, QUALITY_LABEL, tr(f.parameter));
             SetDlgItemInt(w, QUALITY, f.value, FALSE);
             return;
         }
         const bool vbr = device.aacMode == "tvbr";
-        set(w, QUALITY_LABEL, vbr ? "VBR 品质 (0–127)" : "目标比特率 (kbps)");
+        set(w, QUALITY_LABEL, vbr ? tr("vbr127") : tr("targetBitrate"));
         SetDlgItemInt(w, QUALITY, vbr ? device.quality : device.bitrate, FALSE);
     }
     void captureValue(HWND w) {
@@ -203,6 +230,7 @@ struct AudioDialog {
     }
     void init(HWND w) {
         dark.AddDialogWithControls(w);
+        DialogLabels labels(w);
         listFormats(w);
         for (auto &name : algorithms)
             add(w, RESAMPLER, name);
@@ -220,7 +248,7 @@ struct AudioDialog {
         };
         loadRates(RATE44, rates44, apple ? device.appleRate44 : device.rate44);
         loadRates(RATE48, rates48, apple ? device.appleRate48 : device.rate48);
-        set(w, DOWNSAMPLE, apple ? "按采样率系列降采样（Apple AAC-LC 必选）" : "按采样率系列降采样");
+        set(w, DOWNSAMPLE, apple ? tr("downsampleAac") : tr("downsample"));
         CheckDlgButton(w, DOWNSAMPLE, device.usesFamilyResampler() ? BST_CHECKED : BST_UNCHECKED);
         enable(w, DOWNSAMPLE, !apple);
         for (int id : {RESAMPLER, RATE44, RATE48})
@@ -231,13 +259,13 @@ struct AudioDialog {
         validateEncoder(device.output());
         if (device.format == "aac" && device.aacMode == "tvbr" &&
             (device.quality < 0 || device.quality > 127))
-            throw std::runtime_error("AAC VBR 品质范围为 0 到 127");
+            throw std::runtime_error(tr("qualityRange"));
         if (device.format == "aac" && device.aacMode != "tvbr" &&
             (device.bitrate < 8 || device.bitrate > 320))
-            throw std::runtime_error("请输入 8 到 320 kbps 的比特率");
+            throw std::runtime_error(tr("bitrateRange"));
         auto algo = msg(w, RESAMPLER, CB_GETCURSEL);
         if (device.usesFamilyResampler() && algo < 0)
-            throw std::runtime_error("请选择可用的重采样器");
+            throw std::runtime_error(tr("selectResampler"));
         if (algo >= 0)
             device.resampler = algorithms.at(algo);
         if (device.bitrate < 8 || device.bitrate > 320)
@@ -308,7 +336,7 @@ struct AudioDialog {
             case CHAIN: {
                 dsp_chain_config_impl chain;
                 restoreChain(chain, self->device.chain);
-                if (dsp_config_manager::get()->configure_popup(chain, w, "设备转码 DSP"))
+                if (dsp_config_manager::get()->configure_popup(chain, w, tr("dspTitle")))
                     self->device.chain = serializeChain(chain);
                 return TRUE;
             }
@@ -327,6 +355,8 @@ class Page : public preferences_page_instance, private playlist_callback_single_
     std::vector<S> algorithms, subIds;
     std::map<std::pair<S, S>, bool> edits;
     std::set<S> changed;
+    std::optional<DialogLabels> labels;
+    int selectedLanguage = language();
     int selected = -1;
     bool rendering = false;
     struct LayoutItem {
@@ -340,13 +370,13 @@ class Page : public preferences_page_instance, private playlist_callback_single_
     void rememberLayout() {
         GetClientRect(window, &templateBounds);
         templateDpi = GetDpiForWindow(window);
-        for (int id : {DEVICES, ADD, NAME, ROOTDIR, PATTERN, PREVIEW, PREVIEW_FILE, FORMAT, AUDIO, SUBS,
+        for (int id : {LANGUAGE_CHOICE, DEVICES, ADD, NAME, ROOTDIR, PATTERN, PREVIEW, PREVIEW_FILE, FORMAT, AUDIO, SUBS,
                        AUTO_SYNC, REPORTS, SYNC_ALL, CLEAR_RECORDS, DELETE_DEVICE}) {
             HWND control = GetDlgItem(window, id);
             RECT bounds{};
             GetWindowRect(control, &bounds);
             MapWindowPoints(nullptr, window, reinterpret_cast<POINT *>(&bounds), 2);
-            if (id == DEVICES || id == FORMAT) {
+            if (id == DEVICES || id == FORMAT || id == LANGUAGE_CHOICE) {
                 RECT dropped{};
                 if (SendMessageW(control, CB_GETDROPPEDCONTROLRECT, 0, reinterpret_cast<LPARAM>(&dropped)))
                     bounds.bottom = bounds.top + dropped.bottom - dropped.top;
@@ -402,7 +432,7 @@ class Page : public preferences_page_instance, private playlist_callback_single_
             titleformat_object::ptr tf;
             auto pat = value(window, PATTERN);
             if (!pm->activeplaylist_get_focus_item_handle(h)) {
-                directory = "在当前播放列表中选择一首歌以预览路径";
+                directory = tr("previewSelect");
             } else if (titleformat_compiler::get()->compile(tf, pat.c_str())) {
                 pfc::string8 name;
                 titleformat_text_filter_impl_filename_chars filter;
@@ -494,11 +524,11 @@ class Page : public preferences_page_instance, private playlist_callback_single_
     }
     void manageDevice(bool remove) {
         auto &d = all.at(selected);
-        if (transferring(d)) throw std::runtime_error("请等待此设备的传输结束。");
-        S message = remove ? "删除设备「" + d.name + "」及其本地配置、订阅和传输记录？" :
-            "清空「" + d.name + "」的传输记录、歌单对应关系和同步日志？设备设置和订阅将保留。";
-        message += "\n\n设备上的文件将保留。再次发送遇到同名文件时将重新确认。";
-        if (MessageBoxW(window,wide(message).c_str(),L"Walkman Sync", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES)
+        if (transferring(d)) throw std::runtime_error(tr("waitTransfer"));
+        S prompt = message(remove ? "removeConfirm" : "clearConfirm", {d.name});
+        prompt += "\n\n";
+        prompt += tr("keepFiles");
+        if (MessageBoxW(window,wide(prompt).c_str(),L"Walkman Sync", MB_YESNO | MB_DEFBUTTON2 | MB_ICONQUESTION) != IDYES)
             return;
         clearDeviceData(d,remove);
         if (remove) {
@@ -512,9 +542,21 @@ class Page : public preferences_page_instance, private playlist_callback_single_
     }
     void draw() {
         rendering = true;
+        labels->update();
+        msg(window, FORMAT, CB_RESETCONTENT);
+        for (auto key : {"copyOriginal", "convertLossless", "convertAll"})
+            add(window, FORMAT, tr(key));
+        auto playlistLabel = wide(tr("playlistName"));
+        auto autoLabel = wide(tr("autoUpdate"));
+        LVCOLUMNW col{};
+        col.mask = LVCF_TEXT;
+        col.pszText = playlistLabel.data();
+        ListView_SetColumn(subList(), playlistColumn, &col);
+        col.pszText = autoLabel.data();
+        ListView_SetColumn(subList(), checkColumn, &col);
         msg(window, DEVICES, CB_RESETCONTENT);
         for (auto &d : all)
-            add(window, DEVICES, d.name + (online(d) ? " · 已连接" : " · 离线"));
+            add(window, DEVICES, d.name + " · " + tr(online(d) ? "online" : "offline"));
         msg(window, DEVICES, CB_SETCURSEL, selected);
         for (int id : {NAME, ROOTDIR, PATTERN, USE_PATTERN, FORMAT, AUDIO, REPORTS, SUBS, AUTO_SYNC, DELETE_DEVICE, CLEAR_RECORDS, SYNC_ALL})
             enable(window, id, valid());
@@ -553,7 +595,7 @@ class Page : public preferences_page_instance, private playlist_callback_single_
                 auto box = CreateWindowExW(0, L"Button", label.c_str(), WS_CHILD | BS_AUTOCHECKBOX,
                     0, 0, 0, 0, subList(), reinterpret_cast<HMENU>(INT_PTR(row + 1)),
                     core_api::get_my_instance(), nullptr);
-                if (!box) throw std::runtime_error("无法创建歌单复选框");
+                if (!box) throw std::runtime_error(tr("checkboxError"));
                 checks.push_back(box);
                 checkTheme->AddCtrlAuto(box);
                 SendMessageW(box, BM_SETCHECK, automatic ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -570,6 +612,14 @@ class Page : public preferences_page_instance, private playlist_callback_single_
     void command(int id, int notification) {
         if (rendering)
             return;
+        if (id == LANGUAGE_CHOICE && notification == CBN_SELCHANGE) {
+            auto choice = msg(window, LANGUAGE_CHOICE, CB_GETCURSEL);
+            if (choice >= 0 && size_t(choice) < std::size(languageNames)) {
+                selectedLanguage = static_cast<int>(choice);
+                callback->on_state_changed();
+            }
+            return;
+        }
         if (id == ADD) {
             capture();
             AddDialog dialog{endpoints()};
@@ -617,11 +667,11 @@ class Page : public preferences_page_instance, private playlist_callback_single_
             // Use the committed device configuration, just like the File menu.
             for (const auto &d : devices()) {
                 if (d.id != all[selected].id) continue;
-                if (!online(d)) throw std::runtime_error("请连接此设备后再同步。");
+                if (!online(d)) throw std::runtime_error(tr("connectFirst"));
                 start(d);
                 return;
             }
-            throw std::runtime_error("请先应用新设备的设置。");
+            throw std::runtime_error(tr("applyDeviceFirst"));
         } else if ((id == DELETE_DEVICE || id == CLEAR_RECORDS) && valid()) {
             manageDevice(id == DELETE_DEVICE);
         } else if (id == USE_PATTERN && valid()) {
@@ -641,8 +691,8 @@ class Page : public preferences_page_instance, private playlist_callback_single_
                      "SELECT finished,summary FROM report WHERE device=? ORDER BY rowid DESC LIMIT 20",
                      {all[selected].id}))
                 history += row[0] + "\n" + row[1] + "\n\n";
-            popup_message::g_show(history.empty() ? "此设备还没有已保存的同步记录。" : history.c_str(),
-                                  "Walkman Sync · 同步记录");
+            popup_message::g_show(history.empty() ? tr("noHistory") : history.c_str(),
+                                  (S("Walkman Sync · ") + tr("history")).c_str());
         } else if (notification == EN_CHANGE && (id == NAME || id == ROOTDIR || id == PATTERN)) {
             touch();
             preview();
@@ -665,9 +715,10 @@ class Page : public preferences_page_instance, private playlist_callback_single_
                 if (font)
                     for (HWND c = GetWindow(w, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
                         SendMessageW(c, WM_SETFONT, font, FALSE);
-                add(w, FORMAT, "原文件传输");
-                add(w, FORMAT, "仅转换无损音源");
-                add(w, FORMAT, "转换所有音源");
+                self->labels.emplace(w);
+                for (auto name : languageNames)
+                    add(w, LANGUAGE_CHOICE, name);
+                msg(w, LANGUAGE_CHOICE, CB_SETCURSEL, self->selectedLanguage);
                 HWND list = self->subList();
                 SetWindowLongPtrW(list, GWL_STYLE, GetWindowLongPtrW(list, GWL_STYLE) | WS_CLIPCHILDREN);
                 SetWindowSubclass(list, listProc, 1, reinterpret_cast<DWORD_PTR>(self));
@@ -675,11 +726,10 @@ class Page : public preferences_page_instance, private playlist_callback_single_
                 LVCOLUMNW col{};
                 col.mask = LVCF_TEXT | LVCF_WIDTH;
                 col.cx = 120;
-                col.pszText = const_cast<wchar_t *>(L"播放列表名");
+                col.pszText = const_cast<wchar_t *>(L"");
                 ListView_InsertColumn(list, playlistColumn, &col);
                 col.mask |= LVCF_FMT;
                 col.fmt = LVCFMT_CENTER;
-                col.pszText = const_cast<wchar_t *>(L"自动更新");
                 ListView_InsertColumn(list, checkColumn, &col);
                 self->sizeColumns();
                 self->rememberLayout();
@@ -717,14 +767,14 @@ class Page : public preferences_page_instance, private playlist_callback_single_
         selected = all.empty() ? -1 : 0;
         if (!CreateDialogParamW(core_api::get_my_instance(), MAKEINTRESOURCEW(IDD_PREF), parent, proc,
                                 (LPARAM)this))
-            throw std::runtime_error("无法打开设置页");
+            throw std::runtime_error(tr("openPrefs"));
         set_callback_flags(flag_on_item_focus_change | flag_on_playlist_switch | flag_on_items_added |
                            flag_on_items_removed | flag_on_items_replaced | flag_on_items_modified);
     }
     HWND get_wnd() override { return window; }
     t_uint32 get_state() override {
         return preferences_state::dark_mode_supported |
-               (changed.empty() && edits.empty() ? 0 : preferences_state::changed);
+               (changed.empty() && edits.empty() && selectedLanguage == language() ? 0 : preferences_state::changed);
     }
     void reset() override {}
     void apply() override {
@@ -734,14 +784,14 @@ class Page : public preferences_page_instance, private playlist_callback_single_
             for (auto &d : all) {
                 if (d.name.empty() || d.name.find_first_of("\r\n\t") != S::npos ||
                     !names.insert(d.name).second)
-                    throw std::runtime_error("请给设备指定唯一的名称");
+                    throw std::runtime_error(tr("uniqueName"));
                 if (d.root != normalizeRelative(d.root))
-                    throw std::runtime_error("音乐目录包含无效字符");
+                    throw std::runtime_error(tr("badRoot"));
                 titleformat_object::ptr fmt;
                 if (d.pattern.empty() || !titleformat_compiler::get()->compile(fmt, d.pattern.c_str()))
-                    throw std::runtime_error("路径模板无效");
+                    throw std::runtime_error(tr("invalidPattern"));
                 if (d.quality < 0 || d.quality > 127)
-                    throw std::runtime_error("AAC 品质范围为 0 到 127");
+                    throw std::runtime_error(tr("qualityRange"));
             }
             for (auto &d : all)
                 if (changed.contains(d.id))
@@ -752,6 +802,7 @@ class Page : public preferences_page_instance, private playlist_callback_single_
                          {on ? "1" : "0", key.first, key.second});
             changed.clear();
             edits.clear();
+            if (selectedLanguage != language()) setLanguage(selectedLanguage);
             draw();
             callback->on_state_changed();
             poll();
@@ -779,6 +830,7 @@ struct Conflicts {
         if (m == WM_INITDIALOG) {
             self = (Conflicts *)b;
             self->dark.AddDialogWithControls(w);
+            DialogLabels labels(w);
             SetWindowLongPtrW(w, GWLP_USERDATA, b);
             for (auto &p : self->paths)
                 add(w, FILES, p, true);
@@ -809,7 +861,7 @@ std::set<S> chooseConflicts(const std::vector<S> &paths) {
     auto result = DialogBoxParamW(core_api::get_my_instance(), MAKEINTRESOURCEW(IDD_CONFLICT),
                                   core_api::get_main_window(), Conflicts::proc, (LPARAM)&dialog);
     if (result < 0)
-        throw std::runtime_error("无法显示同名文件汇总");
+        throw std::runtime_error(tr("conflictOpen"));
     return dialog.selection;
 }
 } // namespace wm

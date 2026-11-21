@@ -41,7 +41,7 @@ class Volume final : public Storage {
             result /= part;
             auto attr = GetFileAttributesW(result.c_str());
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT))
-                throw std::runtime_error("目标路径包含重解析点");
+                throw std::runtime_error(tr("reparsePoint"));
         }
         return result;
     }
@@ -50,7 +50,7 @@ class Volume final : public Storage {
     explicit Volume(const Device &device) {
         fs::path vol(wide(device.location.substr(4)));
         if (!GetVolumeInformationW(vol.c_str(), nullptr, 0, nullptr, nullptr, nullptr, nullptr, 0))
-            throw std::runtime_error("目标存储卷离线");
+            throw std::runtime_error(tr("volumeOffline"));
         base = vol;
         base = checked(device.root);
     }
@@ -76,10 +76,10 @@ class Volume final : public Storage {
                 out.write(buffer.data(), in.gcount());
             }
             if (!in.eof() || in.bad())
-                throw std::runtime_error("读取源文件失败");
+                throw std::runtime_error(tr("readFailed"));
             out.close();
             if (fs::file_size(stage) != fs::file_size(src))
-                throw std::runtime_error("暂存文件大小与源文件不一致");
+                throw std::runtime_error(tr("stagedSize"));
             abort.check();
             if (!MoveFileExW(stage.c_str(), dest.c_str(),
                              MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0)))

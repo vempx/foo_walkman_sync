@@ -15,7 +15,7 @@ function buildWalkmanMenu(menu, playlistIndex) {
     const nonce = String(Date.now()) + "-" + String(Math.random());
     function call(action, playlistId, deviceId) {
         utils.WriteTextFile(dir + "panel-request.txt", [action + "2", nonce, indices.join(","), "", playlistId, deviceId].join("\n"));
-        if (!fb.RunMainMenuCommand("文件/Walkman Sync Panel")) fb.RunMainMenuCommand("File/Walkman Sync Panel");
+        fb.RunMainMenuCommand("Walkman Sync Panel");
     }
     if (!utils.CheckComponent("foo_walkman_sync")) return null;
     call("list", "", "");
@@ -26,11 +26,11 @@ function buildWalkmanMenu(menu, playlistIndex) {
     let next = 60000;
     for (const line of lines.slice(2)) {
         if (!line) continue;
-        const [device, label, online, subscribed] = line.split("\t");
+        const [device, label, online, subscribed, sendLabel = "发送", subscribeLabel = "订阅"] = line.split("\t");
         const popup = window.CreatePopupMenu();
         const send = next++, toggle = next++;
-        popup.AppendMenuItem(online === "1" ? MF_STRING : MF_GRAYED, send, "发送");
-        popup.AppendMenuItem(MF_STRING, toggle, "订阅");
+        popup.AppendMenuItem(online === "1" ? MF_STRING : MF_GRAYED, send, sendLabel);
+        popup.AppendMenuItem(MF_STRING, toggle, subscribeLabel);
         popup.CheckMenuItem(toggle, subscribed === "1");
         popup.AppendTo(group, MF_STRING, label.replace(/&/g, "&&"));
         commands[send] = () => call("send", lines[1], device);

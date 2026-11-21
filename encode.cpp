@@ -28,10 +28,10 @@ void restoreChain(dsp_chain_config &chain, const S &text) {
             return c - '0';
         if (c >= 'a' && c <= 'f')
             return c - 'a' + 10;
-        throw std::runtime_error("DSP 配置损坏");
+        throw std::runtime_error(tr("badDspConfig"));
     };
     if (text.size() % 2)
-        throw std::runtime_error("DSP 配置损坏");
+        throw std::runtime_error(tr("badDspConfig"));
     std::vector<unsigned char> bytes;
     bytes.reserve(text.size() / 2);
     for (size_t i = 0; i < text.size(); i += 2)
@@ -68,7 +68,7 @@ static void addResampler(dsp_chain_config_impl &chain, const S &name, unsigned f
             return;
         }
     }
-    throw std::runtime_error("所选重采样器不可用或不支持此采样率：" + name);
+    throw std::runtime_error(message("resamplerUnavailable", {name}));
 }
 class Wave {
     std::ofstream out;
@@ -105,19 +105,19 @@ class Wave {
         auto &w = format.Format;
         if (chunk.get_sample_rate() != w.nSamplesPerSec || chunk.get_channels() != w.nChannels ||
             chunk.get_channel_config() != format.dwChannelMask)
-            throw std::runtime_error("DSP 输出格式与目标格式不一致");
+            throw std::runtime_error(tr("dspOutputMismatch"));
         auto count = chunk.get_sample_count() * w.nChannels;
         mem_block_container_impl buf;
         if (pcm) {
             buf.set_size(count * w.wBitsPerSample / 8);
             if (!audio_chunk::g_toFixedPoint(chunk.get_data(), buf.get_ptr(), count, w.wBitsPerSample,
                                              format.Samples.wValidBitsPerSample))
-                throw std::runtime_error("无法还原源位深");
+                throw std::runtime_error(tr("restoreDepth"));
         } else if (!chunk.to_raw_data(buf, 32))
-            throw std::runtime_error("PCM 转换失败");
+            throw std::runtime_error(tr("pcmFailed"));
         size += buf.get_size();
         if (size > UINT32_MAX - 80)
-            throw std::runtime_error("临时 WAV 超出 4 GiB");
+            throw std::runtime_error(tr("wavTooLarge"));
         out.write((const char *)buf.get_ptr(), buf.get_size());
     }
     void finish() {
@@ -142,7 +142,7 @@ S encode(const Song &song, const Device &device, const fs::path &dest, abort_cal
     decoder->initialize(sub, input_flag_simpledecode, abort);
     audio_chunk_impl chunk;
     if (!decoder->run(chunk, abort))
-        throw std::runtime_error("曲目没有音频数据");
+        throw std::runtime_error(tr("noAudio"));
     bool extract = song.mode == Song::extract;
     auto target = extract ? chunk.get_sample_rate() : targetRate(device, chunk.get_sample_rate());
     int precision = extract ? 0 : device.output().bits;
@@ -150,7 +150,7 @@ S encode(const Song &song, const Device &device, const fs::path &dest, abort_cal
     if (!extract && !precision && (bits < 8 || target != chunk.get_sample_rate() || !device.chain.empty()))
         bits = std::max(bits, 24);
     if (bits < 8 || bits > 32)
-        throw std::runtime_error("无法确定分轨源位深");
+        throw std::runtime_error(tr("subsongDepth"));
     auto pcm = dest;
     pcm += L".wav";
     dsp_chain_config_impl chain;
@@ -162,7 +162,7 @@ S encode(const Song &song, const Device &device, const fs::path &dest, abort_cal
     for (size_t i = 0; i < chain.get_count(); ++i) {
         dsp::ptr dsp;
         if (!dsp_entry::g_instantiate(dsp, chain.get_item(i)))
-            throw std::runtime_error("已配置的 DSP 不可用");
+            throw std::runtime_error(tr("dspUnavailable"));
         processors.push_back(dsp);
     }
     std::unique_ptr<Wave> wave;
@@ -187,7 +187,7 @@ S encode(const Song &song, const Device &device, const fs::path &dest, abort_cal
     } while (decoder->run(chunk, abort));
     process(true);
     if (!wave)
-        throw std::runtime_error("DSP 没有输出音频");
+        throw std::runtime_error(tr("noDspOutput"));
     wave->finish();
     runEncoder(device, extract, pcm, dest, abort);
     pfc::string8 url;
@@ -197,11 +197,11 @@ S encode(const Song &song, const Device &device, const fs::path &dest, abort_cal
         input_entry::g_open_for_info_write(writer, {}, url, abort);
     } catch (const exception_io_unsupported_format &) {
         if (!extract && device.output().custom())
-            return "此格式没有可用的标签写入器";
+            return tr("noTagWriter");
         throw;
     } catch (const exception_tagging_unsupported &) {
         if (!extract && device.output().custom())
-            return "此格式不支持写入标签";
+            return tr("tagsUnsupported");
         throw;
     }
     file_info_impl tags;
