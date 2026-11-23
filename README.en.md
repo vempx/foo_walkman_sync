@@ -22,3 +22,5 @@ To enable the playlist menu in the foobox sidebar, open PowerShell in your fooba
 4. To subscribe to playlists, choose **Subscribe** from the same menu. Click **Sync all subscriptions** to update them manually. To sync automatically when the device connects, check the playlists in the **Auto-sync** column and enable the device’s auto-sync checkbox.
 
 Each device has its own encoding, DSP, and resampling settings. Place command-line encoders in the `encoders` folder next to the foobar2000 executable. Playlists on the same device can reuse tracks already transferred. Unsubscribing keeps the files on the device.
+
+The logical CPU count sets the parallel transcoding limit. Tracks are written to each device one at a time.

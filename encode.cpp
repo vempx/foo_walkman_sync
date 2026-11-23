@@ -190,6 +190,8 @@ S encode(const Song &song, const Device &device, const fs::path &dest, abort_cal
         throw std::runtime_error(tr("noDspOutput"));
     wave->finish();
     runEncoder(device, extract, pcm, dest, abort);
+    std::error_code ignored;
+    fs::remove(pcm, ignored);
     pfc::string8 url;
     filesystem::g_get_canonical_path(utf(dest.wstring()).c_str(), url);
     input_info_writer::ptr writer;

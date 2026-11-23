@@ -1,5 +1,7 @@
 #include "sync.h"
 #include <cmath>
+#include <deque>
+#include <future>
 #include <sstream>
 #include <foobar2000/SDK/album_art.h>
 #include <foobar2000/SDK/hasher_md5.h>
@@ -145,6 +147,38 @@ struct Manifest {
     S id, name;
     std::vector<Entry *> order;
 };
+struct ComScope {
+    const HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    ~ComScope() { if (SUCCEEDED(result)) CoUninitialize(); }
+};
+struct EncodedTrack {
+    std::unique_ptr<Temp> temp;
+    fs::path path;
+    S warning;
+};
+std::future<EncodedTrack> encodeAsync(const Song &song, const Device &device, abort_callback &abort) {
+    if (song.mode == Song::copy)
+        return {};
+    auto job = std::make_shared<std::packaged_task<EncodedTrack()>>([&song, &device, &abort] {
+        abort.check();
+        ComScope com;
+        EncodedTrack result;
+        result.temp = std::make_unique<Temp>();
+        result.path = result.temp->dir / wide("track" + outputExtension(device, song.mode, {}));
+        result.warning = encode(song, device, result.path, abort);
+        return result;
+    });
+    auto result = job->get_future();
+    fb2k::inCpuWorkerThread([job = std::move(job)] { (*job)(); });
+    return result;
+}
+struct PendingUpload {
+    Entry &entry;
+    bool replace;
+    std::future<EncodedTrack> encoded;
+    // The worker borrows the song, device, and abort callback from this sync.
+    ~PendingUpload() { if (encoded.valid()) encoded.wait(); }
+};
 class Transfer : public threaded_process_callback {
   public:
     Device device;
@@ -191,22 +225,18 @@ class Transfer : public threaded_process_callback {
                      {scope, s.rel, s.identity, s.signature, stamp.key(), origin});
             e.ok = true;
         };
-        auto send = [&](Entry &e, bool replace) {
+        auto send = [&](Entry &e, bool replace, EncodedTrack encoded) {
             auto &s = e.song;
-            Temp tmp;
-            fs::path src = wide(s.path);
-            if (s.mode != Song::copy) {
-                src = tmp.dir / wide("track" + outputExtension(device, s.mode, {}));
-                auto warning = encode(s, device, src, abort);
-                if (!warning.empty())
-                    report += s.rel + " — " + warning + "\n";
-            }
+            fs::path src = encoded.temp ? encoded.path : fs::path(wide(s.path));
+            if (!encoded.warning.empty())
+                report += s.rel + " — " + encoded.warning + "\n";
             if (!s.coverHash.empty()) {
                 auto cover = transferCover(s, abort);
                 if (!cover || coverHash(cover) != s.coverHash)
                     throw std::runtime_error(tr("coverChanged"));
                 if (s.mode == Song::copy) {
-                    auto staged = tmp.dir / (L"track" + src.extension().wstring());
+                    encoded.temp = std::make_unique<Temp>();
+                    auto staged = encoded.temp->dir / (L"track" + src.extension().wstring());
                     fs::copy_file(src, staged);
                     fs::permissions(staged, fs::perms::owner_write, fs::perm_options::add);
                     src = staged;
@@ -230,16 +260,48 @@ class Transfer : public threaded_process_callback {
             record(e, stamp, "sent");
             ++written;
         };
+        const size_t parallelism = std::max(1u, pfc::getOptimalWorkerThreadCount());
+        std::deque<PendingUpload> pending;
+        size_t completed = 0;
+        auto advance = [&] { status.set_progress(++completed, entries.size() + 1); };
+        auto uploadNext = [&] {
+            auto &upload = pending.front();
+            const auto &rel = upload.entry.song.rel;
+            status.set_item(rel.c_str());
+            try {
+                abort.check();
+                auto encoded = upload.encoded.valid() ? upload.encoded.get() : EncodedTrack{};
+                abort.check();
+                send(upload.entry, upload.replace, std::move(encoded));
+            } catch (const exception_aborted &) {
+                throw;
+            } catch (const std::exception &ex) {
+                problem(rel, ex);
+            }
+            pending.pop_front();
+            advance();
+        };
+        auto queueUpload = [&](Entry &entry, bool replace) {
+            if (pending.size() == parallelism)
+                uploadNext();
+            abort.check();
+            pending.emplace_back(entry, replace);
+            try {
+                pending.back().encoded = encodeAsync(entry.song, device, abort);
+            } catch (...) {
+                pending.pop_back();
+                throw;
+            }
+            if (pending.size() == 1 && entry.song.mode == Song::copy)
+                uploadNext();
+        };
         std::vector<S> conflicts;
-        size_t i = 0;
         for (auto &[rel, e] : entries) {
             abort.check();
-            status.set_progress(i++, entries.size() + 1);
-            status.set_item(rel.c_str());
             try {
                 auto stamp = target->stat(rel);
                 if (!stamp) {
-                    send(e, false);
+                    queueUpload(e, false);
                     continue;
                 }
                 auto &s = e.song;
@@ -249,6 +311,7 @@ class Transfer : public threaded_process_callback {
                     history[0] == std::vector<S>{s.identity, s.signature, stamp->key()}) {
                     e.ok = true;
                     ++reused;
+                    advance();
                     continue;
                 }
                 e.conflict = stamp;
@@ -257,31 +320,34 @@ class Transfer : public threaded_process_callback {
                 throw;
             } catch (const std::exception &ex) {
                 problem(rel, ex);
+                advance();
             }
         }
+        while (!pending.empty()) uploadNext();
         std::set<S> overwrite;
         if (!conflicts.empty())
             fb2k::inMainThreadSynchronous2([&] { overwrite = chooseConflicts(conflicts); });
         for (auto &rel : conflicts) {
             abort.check();
             auto &e = entries.at(rel);
-            status.set_item(rel.c_str());
             try {
-                if (overwrite.count(rel))
-                    send(e, true);
-                else {
-                    auto stamp = target->stat(rel);
-                    if (!stamp || stamp->key() != e.conflict->key())
-                        throw std::runtime_error(tr("skipChanged"));
-                    record(e, *stamp, "adopted");
-                    ++reused;
+                if (overwrite.count(rel)) {
+                    queueUpload(e, true);
+                    continue;
                 }
+                auto stamp = target->stat(rel);
+                if (!stamp || stamp->key() != e.conflict->key())
+                    throw std::runtime_error(tr("skipChanged"));
+                record(e, *stamp, "adopted");
+                ++reused;
             } catch (const exception_aborted &) {
                 throw;
             } catch (const std::exception &ex) {
                 problem(rel, ex);
             }
+            advance();
         }
+        while (!pending.empty()) uploadNext();
         for (auto &m : manifests) {
             abort.check();
             try {
@@ -336,14 +402,13 @@ class Transfer : public threaded_process_callback {
         }
     }
     void run(threaded_process_status &status, abort_callback &abort) override {
-        HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        ComScope com;
         try {
             work(status, abort);
+        } catch (const exception_aborted &) {
         } catch (const std::exception &e) {
             report += e.what();
         }
-        if (SUCCEEDED(com))
-            CoUninitialize();
     }
     void on_done(HWND, bool cancelled) override {
         busy.erase(device.location);
